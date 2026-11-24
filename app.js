@@ -18,6 +18,9 @@ const COMPARAR = [['unitario', 'Precio unitario (por litro, kg, unidad)'], ['tot
 const TIPOS_TIENDA = [['web', 'Web propia'], ['shopify', 'Shopify'], ['woo', 'WooCommerce'], ['instagram', 'Instagram / WhatsApp'], ['fisica', 'Tienda física'], ['otra', 'Otra']];
 const UNIDADES = [['', 'Sin pack'], ['un', 'unidades'], ['ml', 'ml'], ['l', 'litros'], ['g', 'gramos'], ['kg', 'kg']];
 const ESTADOS_LINK = [['ok', 'Activo'], ['roto', 'Roto'], ['bloqueado', 'Bloqueado'], ['porVerificar', 'Por verificar']];
+const PRIORIDADES = [['alta', 'Alta'], ['media', 'Media'], ['baja', 'Baja']];
+const PRIO_ORD = { alta: 0, media: 1, baja: 2 };
+const PRIO_CLS = { alta: 'bad', media: 'warn', baja: '' };
 
 /* ---------- Datos ---------- */
 let DB = {}, META = {};
@@ -36,17 +39,31 @@ const SEED_CATS = [
   ['cat-tec-audifonos', 'Audífonos', 'cat-tec', 'unica', 'total', 1],
   ['cat-tec-afeitadora', 'Afeitadora', 'cat-tec', 'unica', 'total', 2]
 ];
+const SEED_CATS_TAREAS = [
+  ['ctar-casa', 'Casa', 1],
+  ['ctar-personal', 'Personal', 2],
+  ['ctar-pichidangui', 'Pichidangui', 3],
+  ['ctar-cuentas', 'Cuentas bancarias', 4]
+];
 const CFG_DEFAULT = { comuna: 'Peñalolén', diasSinActualizar: 14, margenMinimo: 5, bajoPromedio: 10, minObservaciones: 3, diasSilencio: 7 };
 
 function load() {
   try { DB = JSON.parse(localStorage.getItem(LS_DB)) || {}; } catch { DB = {}; }
   try { META = JSON.parse(localStorage.getItem(LS_META)) || {}; } catch { META = {}; }
-  SHEETS.forEach(t => DB[t] = DB[t] || []);
+  // Si esta versión trae hojas nuevas, se fuerza una descarga completa en la próxima sincronización.
+  let nuevas = false;
+  SHEETS.forEach(t => { if (!DB[t]) { DB[t] = []; nuevas = true; } });
+  if (nuevas) { META.since = ''; persistMeta(); }
   if (!DB.Categorias.length) {
     SEED_CATS.forEach(([id, nombre, padreId, tipoCompra, compararPor, orden]) =>
       DB.Categorias.push({ id, nombre, padreId, tipoCompra, compararPor, orden, archivada: 0, updatedAt: SEED_AT, eliminado: 0, _d: 1 }));
     Object.entries(CFG_DEFAULT).forEach(([clave, valor]) =>
       DB.Config.push({ clave, valor: String(valor), updatedAt: SEED_AT, eliminado: 0, _d: 1 }));
+    persist();
+  }
+  if (!DB.CategoriasTareas.length) {
+    SEED_CATS_TAREAS.forEach(([id, nombre, orden]) =>
+      DB.CategoriasTareas.push({ id, nombre, orden, updatedAt: SEED_AT, eliminado: 0, _d: 1 }));
     persist();
   }
 }
@@ -141,6 +158,21 @@ function goodMoment(prod) {
 }
 const WHY = { objetivo: 'bajo tu precio objetivo', minimo: 'cerca del mínimo histórico', promedio: 'bajo el promedio de 30 días' };
 
+/* ---------- Tareas: ayudas ---------- */
+const tcatName = id => { const c = rec('CategoriasTareas', id); return c && !c.eliminado ? c.nombre : ''; };
+const tcats = () => live('CategoriasTareas').sort((a, b) => ((a.orden || 0) - (b.orden || 0)) || a.nombre.localeCompare(b.nombre));
+const tcatOptions = () => [['', 'Sin categoría'], ...tcats().map(c => [c.id, c.nombre])];
+const fechaCorta = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+function tareaEstado(t) {
+  if (!t.fechaLimite) return 'sinfecha';
+  const h = today();
+  return t.fechaLimite < h ? 'atrasada' : (t.fechaLimite === h ? 'hoy' : 'proxima');
+}
+const cmpTarea = (a, b) =>
+  (a.fechaLimite || '9999').localeCompare(b.fechaLimite || '9999')
+  || ((PRIO_ORD[a.prioridad] ?? 1) - (PRIO_ORD[b.prioridad] ?? 1))
+  || String(a.titulo).localeCompare(String(b.titulo));
+
 /* ---------- Alertas (se calculan al vuelo) ---------- */
 function computeAlerts() {
   const out = [], hoy = today();
@@ -166,12 +198,17 @@ function computeAlerts() {
     if (p && !p.eliminado) out.push({ key: `link:${l.id}`, tipo: 'link', prodId: p.id,
       texto: `${p.nombre} en ${t ? t.nombre : 'tienda'}: link ${l.estadoLink}` });
   });
+  live('Tareas').filter(t => t.estado !== 'hecha' && t.fechaLimite && t.fechaLimite <= hoy).sort(cmpTarea).forEach(t => {
+    const d = daysBetween(t.fechaLimite, hoy), cat = tcatName(t.categoriaId);
+    out.push({ key: `tarea:${t.id}`, tipo: 'tarea', tareaId: t.id,
+      texto: `${t.titulo}: ${d > 0 ? 'atrasada hace ' + d + (d === 1 ? ' día' : ' días') : 'vence hoy'}${cat ? ' (' + cat + ')' : ''}` });
+  });
   return out.filter(a => {
     const d = rec('Alertas', a.key);
     return !(d && !d.eliminado && d.estado === 'descartada' && daysBetween(d.fecha, hoy) < cfg('diasSilencio'));
   });
 }
-const ALERT_LABEL = { objetivo: ['Bajo tu objetivo', 'good'], momento: ['Buen momento', 'good'], reponer: ['Reponer', 'warn'], sinprecio: ['Sin precio al día', ''], link: ['Link con problema', 'bad'] };
+const ALERT_LABEL = { objetivo: ['Bajo tu objetivo', 'good'], momento: ['Buen momento', 'good'], reponer: ['Reponer', 'warn'], sinprecio: ['Sin precio al día', ''], link: ['Link con problema', 'bad'], tarea: ['Tarea', 'warn'] };
 
 /* ---------- Categorías ---------- */
 const catName = id => { const c = rec('Categorias', id); if (!c) return '-'; const p = c.padreId && rec('Categorias', c.padreId); return p ? `${p.nombre} › ${c.nombre}` : c.nombre; };
@@ -223,14 +260,15 @@ function formModal(title, fields, vals, cb, submitLabel) {
 }
 
 /* ---------- Estado de vista ---------- */
-const S = { view: 'inicio', param: null, q: '', fcat: '' };
-const TITLES = { inicio: 'Inicio', productos: 'Productos', producto: 'Producto', listas: 'Listas de compra', lista: 'Lista', alertas: 'Alertas', mas: 'Más', categorias: 'Categorías', tiendas: 'Tiendas', config: 'Configuración' };
-const NAVMAP = { producto: 'productos', lista: 'listas', categorias: 'mas', tiendas: 'mas', config: 'mas' };
+const S = { view: 'inicio', param: null, q: '', fcat: '', ttab: 'rapida', tcat: '', tprio: '', rOpen: false, tOpen: false };
+const TITLES = { inicio: 'Inicio', productos: 'Productos', producto: 'Producto', listas: 'Listas de compra', lista: 'Lista', tareas: 'Tareas', tcategorias: 'Categorías de tareas', alertas: 'Alertas', mas: 'Más', categorias: 'Categorías', tiendas: 'Tiendas', config: 'Configuración' };
+const NAVMAP = { producto: 'productos', lista: 'listas', tcategorias: 'tareas', categorias: 'mas', tiendas: 'mas', config: 'mas' };
 
 function pill(txt, cls) { return `<span class="pill ${cls || ''}">${esc(txt)}</span>`; }
 function alertRow(a) {
   const [lbl, cls] = ALERT_LABEL[a.tipo];
-  return `<div class="card click" data-act="prod-open" data-id="${a.prodId}">${pill(lbl, cls)}<div>${esc(a.texto)}</div></div>`;
+  const act = a.tareaId ? 'data-act="tarea-open"' : `data-act="prod-open" data-id="${a.prodId}"`;
+  return `<div class="card click" ${act}>${pill(lbl, cls)}<div>${esc(a.texto)}</div></div>`;
 }
 function backBtn(to) { return `<button class="mini" data-act="nav" data-id="${to}">‹ Volver</button>`; }
 
@@ -252,6 +290,7 @@ VIEWS.inicio = () => {
     ${sec('Por reponer', group(['reponer']), 'Sin reposiciones pendientes.')}
     ${sec('Sin precio actualizado', group(['sinprecio']), 'Todo al día.')}
     ${group(['link']).length ? sec('Links con problemas', group(['link']), '') : ''}
+    ${group(['tarea']).length ? sec('Tareas atrasadas o de hoy', group(['tarea']), '') : ''}
     <div class="row wrap" style="margin-top:14px"><button class="primary" data-act="prod-new">+ Producto</button><button class="ghost" data-act="list-new">+ Lista</button></div>`;
 };
 
@@ -379,12 +418,74 @@ VIEWS.lista = () => {
     <button class="primary" data-act="list-add" data-id="${l.id}">+ Agregar productos</button>`;
 };
 
+/* ----- Tareas: lista rápida y tareas planificadas ----- */
+VIEWS.tareas = () => {
+  const seg = `<div class="seg"><button data-act="ttab" data-id="rapida" class="${S.ttab === 'rapida' ? 'on' : ''}">Lista rápida</button><button data-act="ttab" data-id="plan" class="${S.ttab === 'plan' ? 'on' : ''}">Planificadas</button></div>`;
+  return seg + (S.ttab === 'plan' ? viewPlan() : viewRapida());
+};
+
+function viewRapida() {
+  const all = live('Rapidas');
+  const pend = all.filter(r => !r.hecho).sort((a, b) => (b.orden || 0) - (a.orden || 0));
+  const done = all.filter(r => r.hecho).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const row = r => `<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line)">
+    <label class="inl" style="margin:0;flex:1"><input type="checkbox" data-act="rapida-toggle" data-id="${r.id}" ${r.hecho ? 'checked' : ''}> <span style="${r.hecho ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(r.texto)}</span></label>
+    <button class="mini" data-act="rapida-edit" data-id="${r.id}">editar</button><button class="mini danger" data-act="rapida-del" data-id="${r.id}">x</button></div>`;
+  return `<div class="row" style="margin:10px 0"><input id="rq" placeholder="Agregar algo rápido" autocomplete="off"><button class="primary" data-act="rapida-add">+</button></div>
+    <div class="card" style="padding:4px 12px">${pend.length ? pend.map(row).join('') : '<div class="empty">Nada pendiente.</div>'}</div>
+    ${done.length ? `<details id="rdone" ${S.rOpen ? 'open' : ''}><summary>Hechas (${done.length})</summary><div class="card" style="padding:4px 12px;margin-top:6px">${done.map(row).join('')}</div><button class="mini danger" data-act="rapida-clean">Limpiar hechas</button></details>` : ''}`;
+}
+
+function tareaCard(t) {
+  const est = tareaEstado(t), hecha = t.estado === 'hecha';
+  const pb = (txt, cls, act) => `<button class="pill ${cls}" data-act="${act}" data-id="${t.id}">${esc(txt)}</button>`;
+  const cat = tcatName(t.categoriaId);
+  let fechaTxt = t.fechaLimite ? fechaCorta(t.fechaLimite) : 'Sin fecha';
+  if (!hecha && est === 'atrasada') fechaTxt += ` (hace ${daysBetween(t.fechaLimite, today())} d)`;
+  if (!hecha && est === 'hoy') fechaTxt += ' (hoy)';
+  const fechaCls = hecha ? '' : (est === 'atrasada' ? 'bad' : (est === 'hoy' ? 'warn' : ''));
+  return `<div class="card tarea ${hecha ? 'done' : ''}">
+    <div class="row"><input type="checkbox" data-act="tarea-toggle" data-id="${t.id}" ${hecha ? 'checked' : ''} aria-label="Hecha">
+      <div style="flex:1"><h3>${esc(t.titulo)}</h3>${t.notas ? `<div class="mut small">${esc(t.notas)}</div>` : ''}</div></div>
+    <div class="row wrap" style="margin-top:6px">${pb(cat || 'Sin categoría', '', 'tarea-cat')}${pb('Prioridad ' + (t.prioridad || 'media'), PRIO_CLS[t.prioridad] || '', 'tarea-prio')}${pb(fechaTxt, fechaCls, 'tarea-fecha')}</div>
+    ${hecha && t.fechaHecha ? `<div class="mut small">Hecha el ${esc(fechaCorta(t.fechaHecha))}</div>` : ''}
+    <div class="row end" style="margin-top:6px"><button class="mini" data-act="tarea-edit" data-id="${t.id}">Editar</button><button class="mini danger" data-act="tarea-del" data-id="${t.id}">x</button></div></div>`;
+}
+
+function viewPlan() {
+  const filt = t => (!S.tcat || (S.tcat === '_none' ? !t.categoriaId : t.categoriaId === S.tcat)) && (!S.tprio || t.prioridad === S.tprio);
+  const all = live('Tareas').filter(filt);
+  const pend = all.filter(t => t.estado !== 'hecha').sort(cmpTarea);
+  const done = all.filter(t => t.estado === 'hecha').sort((a, b) => (b.fechaHecha || '').localeCompare(a.fechaHecha || '')).slice(0, 50);
+  const secs = [['atrasada', 'Atrasadas'], ['hoy', 'Hoy'], ['proxima', 'Próximas'], ['sinfecha', 'Sin fecha']];
+  const catOpts = [['', 'Todas las categorías'], ...tcats().map(c => [c.id, c.nombre]), ['_none', 'Sin categoría']];
+  const prioOpts = [['', 'Todas las prioridades'], ...PRIORIDADES];
+  const body = secs.map(([k, label]) => {
+    const items = pend.filter(t => tareaEstado(t) === k);
+    return items.length ? `<h2>${label} (${items.length})</h2>${items.map(tareaCard).join('')}` : '';
+  }).join('');
+  return `<div class="row between"><button class="mini" data-act="nav" data-id="tcategorias">Categorías de tareas</button><button class="primary" data-act="tarea-new">+ Tarea</button></div>
+    <div class="grid2" style="margin:10px 0 0">
+      <select id="tfcat">${catOpts.map(o => opt(o, S.tcat)).join('')}</select>
+      <select id="tfprio">${prioOpts.map(o => opt(o, S.tprio)).join('')}</select></div>
+    ${body || '<div class="empty">Sin tareas pendientes. Toca "+ Tarea" para agregar una.</div>'}
+    ${done.length ? `<details id="tdone" ${S.tOpen ? 'open' : ''}><summary>Hechas (${done.length})</summary>${done.map(tareaCard).join('')}</details>` : ''}`;
+}
+
+VIEWS.tcategorias = () => `<div class="row between">${backBtn('tareas')}<button class="primary" data-act="tcat-new">+ Categoría</button></div><h1>Categorías de tareas</h1>` +
+  (tcats().map(c => `<div class="card"><div class="row between"><h3>${esc(c.nombre)}</h3><div class="row"><button class="mini" data-act="tcat-up" data-id="${c.id}">↑</button><button class="mini" data-act="tcat-edit" data-id="${c.id}">Editar</button><button class="mini danger" data-act="tcat-del" data-id="${c.id}">x</button></div></div>
+    <div class="mut small">${live('Tareas').filter(t => t.categoriaId === c.id && t.estado !== 'hecha').length} pendientes</div></div>`).join('')
+    || '<div class="empty">Sin categorías. Toca "+ Categoría" para crear la primera.</div>');
+
 VIEWS.alertas = () => {
   const al = computeAlerts();
   return `<h1>Alertas</h1>` + (al.length ? al.map(a => {
     const [lbl, cls] = ALERT_LABEL[a.tipo];
-    return `<div class="card">${pill(lbl, cls)}<div>${esc(a.texto)}</div><div class="row" style="margin-top:8px"><button class="mini" data-act="prod-open" data-id="${a.prodId}">Ver producto</button><button class="mini" data-act="alert-dismiss" data-id="${esc(a.key)}" data-tipo="${a.tipo}" data-prod="${a.prodId}">Descartar ${cfg('diasSilencio')} días</button></div></div>`;
-  }).join('') : '<div class="empty">Sin alertas. Se generan solas según tus precios, objetivos y frecuencias de recompra.</div>') +
+    const btns = a.tareaId
+      ? `<button class="mini" data-act="tarea-open">Ver tareas</button>`
+      : `<button class="mini" data-act="prod-open" data-id="${a.prodId}">Ver producto</button><button class="mini" data-act="alert-dismiss" data-id="${esc(a.key)}" data-tipo="${a.tipo}" data-prod="${a.prodId}">Descartar ${cfg('diasSilencio')} días</button>`;
+    return `<div class="card">${pill(lbl, cls)}<div>${esc(a.texto)}</div><div class="row" style="margin-top:8px">${btns}</div></div>`;
+  }).join('') : '<div class="empty">Sin alertas. Se generan solas según tus precios, objetivos, frecuencias de recompra y fechas de tareas.</div>') +
     `<div class="mut small">Por ahora las alertas viven solo aquí. Más adelante pueden llegar por correo.</div>`;
 };
 
@@ -619,6 +720,89 @@ ACT['item-store'] = id => {
   ], i, v => { save('ListaItems', { ...i, ...v }); });
 };
 
+/* Tareas: pestaña y lista rápida */
+ACT.ttab = id => { S.ttab = id; render(); };
+ACT['tarea-open'] = () => { S.ttab = 'plan'; go('tareas'); };
+ACT['rapida-add'] = () => {
+  const el = $('#rq'), texto = el ? el.value.trim() : '';
+  if (!texto) return;
+  save('Rapidas', { id: uid(), texto, hecho: 0, orden: Date.now(), eliminado: 0 });
+  render();
+  const n = $('#rq'); if (n) n.focus();
+};
+ACT['rapida-toggle'] = (id, el) => { const r = rec('Rapidas', id); r.hecho = el.checked ? 1 : 0; save('Rapidas', r); render(); };
+ACT['rapida-edit'] = id => {
+  const r = rec('Rapidas', id);
+  formModal('Editar', [{ k: 'texto', label: 'Texto', req: 1 }], r, v => { save('Rapidas', { ...r, ...v }); });
+};
+ACT['rapida-del'] = id => { remove('Rapidas', id); render(); };
+ACT['rapida-clean'] = () => {
+  const hechas = live('Rapidas').filter(r => r.hecho);
+  if (!hechas.length || !confirm(`¿Borrar ${hechas.length} elemento(s) hecho(s)?`)) return;
+  hechas.forEach(r => remove('Rapidas', r.id)); render();
+};
+
+/* Tareas planificadas */
+const tareaFields = () => [
+  { k: 'titulo', label: 'Tarea', req: 1 },
+  { k: 'categoriaId', label: 'Categoría', type: 'select', opts: tcatOptions() },
+  { k: 'prioridad', label: 'Prioridad', type: 'select', opts: PRIORIDADES },
+  { k: 'fechaLimite', label: 'Fecha para cumplir', type: 'date', hint: 'Déjala vacía si no tiene fecha.' },
+  { k: 'notas', label: 'Notas', type: 'area' }
+];
+ACT['tarea-new'] = () => formModal('Nueva tarea', tareaFields(),
+  { categoriaId: S.tcat && S.tcat !== '_none' ? S.tcat : '', prioridad: 'media', fechaLimite: '' },
+  v => { save('Tareas', { id: uid(), estado: 'pendiente', fechaHecha: '', eliminado: 0, ...v }); });
+ACT['tarea-edit'] = id => {
+  const t = rec('Tareas', id);
+  formModal('Editar tarea', tareaFields(), t, v => { save('Tareas', { ...t, ...v }); });
+};
+ACT['tarea-cat'] = id => {
+  const t = rec('Tareas', id);
+  formModal('Cambiar categoría', [{ k: 'categoriaId', label: 'Categoría', type: 'select', opts: tcatOptions() }], t, v => { save('Tareas', { ...t, ...v }); });
+};
+ACT['tarea-prio'] = id => {
+  const t = rec('Tareas', id);
+  formModal('Cambiar prioridad', [{ k: 'prioridad', label: 'Prioridad', type: 'select', opts: PRIORIDADES }], t, v => { save('Tareas', { ...t, ...v }); });
+};
+ACT['tarea-fecha'] = id => {
+  const t = rec('Tareas', id);
+  formModal('Cambiar fecha', [{ k: 'fechaLimite', label: 'Fecha para cumplir', type: 'date', hint: 'Déjala vacía para quitar la fecha.' }], t, v => { save('Tareas', { ...t, ...v }); });
+};
+ACT['tarea-toggle'] = (id, el) => {
+  const t = rec('Tareas', id);
+  t.estado = el.checked ? 'hecha' : 'pendiente';
+  t.fechaHecha = el.checked ? today() : '';
+  save('Tareas', t); render();
+};
+ACT['tarea-del'] = id => {
+  const t = rec('Tareas', id);
+  if (confirm(`¿Eliminar la tarea "${t.titulo}"?`)) { remove('Tareas', id); render(); }
+};
+
+/* Categorías de tareas */
+ACT['tcat-new'] = () => formModal('Nueva categoría de tareas', [{ k: 'nombre', label: 'Nombre', req: 1 }], {},
+  v => { save('CategoriasTareas', { id: uid(), nombre: v.nombre, orden: Math.max(0, ...tcats().map(c => c.orden || 0)) + 1, eliminado: 0 }); });
+ACT['tcat-edit'] = id => {
+  const c = rec('CategoriasTareas', id);
+  formModal('Editar categoría', [{ k: 'nombre', label: 'Nombre', req: 1 }], c, v => { save('CategoriasTareas', { ...c, ...v }); });
+};
+ACT['tcat-up'] = id => {
+  const l = tcats(), i = l.findIndex(c => c.id === id);
+  if (i < 1) return;
+  [l[i - 1], l[i]] = [l[i], l[i - 1]];
+  l.forEach((c, k) => { if (c.orden !== k + 1) save('CategoriasTareas', { ...c, orden: k + 1 }); });
+  render();
+};
+ACT['tcat-del'] = id => {
+  const c = rec('CategoriasTareas', id);
+  const usadas = live('Tareas').filter(t => t.categoriaId === id);
+  const msg = usadas.length ? `¿Eliminar "${c.nombre}"? Sus ${usadas.length} tarea(s) quedarán sin categoría.` : `¿Eliminar "${c.nombre}"?`;
+  if (!confirm(msg)) return;
+  usadas.forEach(t => save('Tareas', { ...t, categoriaId: '' }));
+  remove('CategoriasTareas', id); render();
+};
+
 /* Alertas */
 ACT['alert-dismiss'] = (key, b) => {
   const a = rec('Alertas', key) || { id: key, eliminado: 0 };
@@ -700,20 +884,27 @@ document.addEventListener('change', e => {
   const b = e.target;
   if (b.matches('input[type=checkbox][data-act]')) ACT[b.dataset.act](b.dataset.id, b);
   if (b.id === 'fcat') { S.fcat = b.value; $('#plist').innerHTML = productList(); }
+  if (b.id === 'tfcat') { S.tcat = b.value; render(); }
+  if (b.id === 'tfprio') { S.tprio = b.value; render(); }
   if (b.id === 'impfile' && b.files[0]) {
     const rd = new FileReader();
     rd.onload = () => {
       try {
         const d = JSON.parse(rd.result);
-        if (!SHEETS.every(t => Array.isArray(d[t]))) throw 0;
+        if (!Array.isArray(d.Productos) || !SHEETS.every(t => d[t] === undefined || Array.isArray(d[t]))) throw 0;
         if (!confirm('Esto reemplaza los datos de este dispositivo con el respaldo. ¿Continuar?')) return;
-        SHEETS.forEach(t => { DB[t] = d[t].map(r => ({ ...r, _d: 1 })); }); persist(); scheduleSync(); render();
+        SHEETS.forEach(t => { DB[t] = (d[t] || []).map(r => ({ ...r, _d: 1 })); }); persist(); scheduleSync(); render();
       } catch { alert('El archivo no es un respaldo válido.'); }
     };
     rd.readAsText(b.files[0]);
   }
 });
 document.addEventListener('input', e => { if (e.target.id === 'q') { S.q = e.target.value; $('#plist').innerHTML = productList(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'rq') { e.preventDefault(); ACT['rapida-add'](); } });
+document.addEventListener('toggle', e => {
+  if (e.target.id === 'rdone') S.rOpen = e.target.open;
+  if (e.target.id === 'tdone') S.tOpen = e.target.open;
+}, true);
 window.addEventListener('online', sync);
 
 /* ---------- Inicio ---------- */
