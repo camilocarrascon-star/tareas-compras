@@ -19,6 +19,7 @@ h1{font-size:22px;margin:6px 0 10px}h2{font-size:16px;margin:18px 0 8px}h3{margi
 .mut{color:var(--mut);font-size:13px}.small{font-size:13px}
 .pill{display:inline-block;background:var(--chip);border-radius:20px;padding:2px 9px;font-size:12px;margin:2px 4px 2px 0}
 .pill.good{background:var(--good);color:#fff}.pill.warn{background:var(--warn);color:#fff}.pill.bad{background:var(--bad);color:#fff}
+button.pill{border:0;font:inherit;font-size:12px;color:var(--ink);cursor:pointer}
 button.primary,button.ghost,button.danger,button.mini{border-radius:10px;border:1px solid var(--brand);padding:9px 14px;font-size:15px}
 button.primary{background:var(--brand);color:var(--brand-ink);font-weight:600}
 button.ghost{background:none;color:var(--brand)}
@@ -41,3 +42,8 @@ details summary{cursor:pointer;color:var(--brand);font-size:14px;margin-top:6px}
 svg.spark{width:100%;height:60px}
 .empty{text-align:center;color:var(--mut);padding:26px 10px}
 .warnbox{background:rgba(180,83,9,.12);border:1px solid var(--warn);border-radius:10px;padding:8px 10px;font-size:13px;margin-top:6px}
+.seg{display:flex;border:1px solid var(--brand);border-radius:10px;overflow:hidden;margin:4px 0 10px}
+.seg button{flex:1;border:0;background:none;color:var(--brand);padding:9px;font-size:15px}
+.seg button.on{background:var(--brand);color:var(--brand-ink);font-weight:600}
+.tarea input[type=checkbox]{width:22px;height:22px;padding:0;flex:none}
+.tarea.done h3{text-decoration:line-through;opacity:.6}
