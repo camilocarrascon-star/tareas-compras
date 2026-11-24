@@ -7,5 +7,8 @@ const SCHEMA = {
   "Listas": [["id","text"],["nombre","text"],["categoriaId","text"],["estado","text"],["updatedAt","text"],["eliminado","bool"]],
   "ListaItems": [["id","text"],["listaId","text"],["productoId","text"],["cantidad","num"],["comprado","bool"],["tiendaId","text"],["updatedAt","text"],["eliminado","bool"]],
   "Alertas": [["id","text"],["tipo","text"],["productoId","text"],["mensaje","text"],["fecha","text"],["estado","text"],["updatedAt","text"],["eliminado","bool"]],
-  "Config": [["clave","text"],["valor","text"],["updatedAt","text"],["eliminado","bool"]]
+  "Config": [["clave","text"],["valor","text"],["updatedAt","text"],["eliminado","bool"]],
+  "Rapidas": [["id","text"],["texto","text"],["hecho","bool"],["orden","num"],["updatedAt","text"],["eliminado","bool"]],
+  "CategoriasTareas": [["id","text"],["nombre","text"],["orden","num"],["updatedAt","text"],["eliminado","bool"]],
+  "Tareas": [["id","text"],["titulo","text"],["notas","text"],["categoriaId","text"],["prioridad","text"],["fechaLimite","text"],["estado","text"],["fechaHecha","text"],["updatedAt","text"],["eliminado","bool"]]
 };
