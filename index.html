@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Compras</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Compras">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#1f6f5c">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="top">
+  <span id="title">Inicio</span>
+  <button id="syncdot" data-act="sync-now" aria-label="Sincronizar"></button>
+</header>
+<main id="main"></main>
+<nav id="nav">
+  <button data-act="nav" data-id="inicio"><i>⌂</i>Inicio</button>
+  <button data-act="nav" data-id="productos"><i>▤</i>Productos</button>
+  <button data-act="nav" data-id="listas"><i>☑</i>Listas</button>
+  <button data-act="nav" data-id="alertas"><i>●</i>Alertas<b id="badge" hidden></b></button>
+  <button data-act="nav" data-id="mas"><i>≡</i>Más</button>
+</nav>
+<script src="schema.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
