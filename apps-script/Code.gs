@@ -25,6 +25,10 @@ function doPost(e) {
     var bySheet = {};
     changes.forEach(function (c) { (bySheet[c.sheet] = bySheet[c.sheet] || []).push(c.rec); });
 
+    // Si llegan cambios para una hoja que no existe, avisar para que la app no los dé por enviados.
+    var missing = Object.keys(bySheet).filter(function (n) { return !ss.getSheetByName(n); });
+    if (missing.length) return json_({ ok: false, error: 'Faltan hojas: ' + missing.join(', ') + '. Ejecuta crearHojasNuevas() en el script.' });
+
     var records = {};
     ss.getSheets().forEach(function (sh) {
       var name = sh.getName();
@@ -35,10 +39,23 @@ function doPost(e) {
       var keyCol = 0, updCol = headers.indexOf('updatedAt');
       if (updCol < 0) return;
 
+      var dirty = false;
+
+      // Agrega al final las columnas nuevas que la app envía y la hoja todavía no tiene.
+      var inc0 = (bySheet[name] || [])[0];
+      if (inc0) {
+        Object.keys(inc0).forEach(function (k) {
+          if (headers.indexOf(k) < 0) {
+            headers.push(k);
+            values.forEach(function (row, i) { row.push(i === 0 ? k : ''); });
+            dirty = true;
+          }
+        });
+      }
+
       var index = {};
       for (var r = 1; r < values.length; r++) index[String(values[r][keyCol])] = r;
 
-      var dirty = false;
       (bySheet[name] || []).forEach(function (inc) {
         var key = String(inc[headers[keyCol]]);
         if (!key) return;
@@ -79,6 +96,27 @@ function doPost(e) {
   } finally {
     try { lock.releaseLock(); } catch (x) { }
   }
+}
+
+/**
+ * Ejecutar una sola vez desde el editor de Apps Script (botón Ejecutar).
+ * Crea las hojas de tareas con sus encabezados si todavía no existen.
+ * Debe coincidir con schema.js.
+ */
+function crearHojasNuevas() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var def = {
+    Rapidas: ['id', 'texto', 'hecho', 'orden', 'updatedAt', 'eliminado'],
+    CategoriasTareas: ['id', 'nombre', 'orden', 'updatedAt', 'eliminado'],
+    Tareas: ['id', 'titulo', 'notas', 'categoriaId', 'prioridad', 'fechaLimite', 'estado', 'fechaHecha', 'updatedAt', 'eliminado']
+  };
+  Object.keys(def).forEach(function (n) {
+    var sh = ss.getSheetByName(n) || ss.insertSheet(n);
+    if (sh.getLastRow() === 0) {
+      sh.getRange(1, 1, 1, def[n].length).setValues([def[n]]);
+      sh.setFrozenRows(1);
+    }
+  });
 }
 
 function json_(obj) {
