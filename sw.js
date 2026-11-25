@@ -1,4 +1,4 @@
-const CACHE = 'compras-v2';
+const CACHE = 'compras-v3';
 const ASSETS = ['./', 'index.html', 'styles.css', 'schema.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-180.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
