@@ -16,15 +16,17 @@
 <body>
 <header id="top">
   <span id="title">Inicio</span>
-  <button id="syncdot" data-act="sync-now" aria-label="Sincronizar"></button>
+  <div class="hbtns">
+    <button id="bell" data-act="nav" data-id="alertas" aria-label="Alertas">🔔<b id="badge" hidden></b></button>
+    <button id="syncdot" data-act="sync-now" aria-label="Sincronizar"></button>
+  </div>
 </header>
 <main id="main"></main>
 <nav id="nav">
   <button data-act="nav" data-id="inicio"><i>⌂</i>Inicio</button>
   <button data-act="nav" data-id="productos"><i>▤</i>Productos</button>
+  <button data-act="nav" data-id="tareas" class="hero"><i>✓</i>Tareas</button>
   <button data-act="nav" data-id="listas"><i>☑</i>Listas</button>
-  <button data-act="nav" data-id="tareas"><i>✓</i>Tareas</button>
-  <button data-act="nav" data-id="alertas"><i>●</i>Alertas<b id="badge" hidden></b></button>
   <button data-act="nav" data-id="mas"><i>≡</i>Más</button>
 </nav>
 <script src="schema.js"></script>
