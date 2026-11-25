@@ -16,11 +16,12 @@ const $ = (s, e = document) => e.querySelector(s);
 const TIPOS_COMPRA = [['recurrente', 'Recurrente (se repone)'], ['ocasional', 'Ocasional'], ['unica', 'Única (se compra una vez)']];
 const COMPARAR = [['unitario', 'Precio unitario (por litro, kg, unidad)'], ['total', 'Total con envío']];
 const TIPOS_TIENDA = [['web', 'Web propia'], ['shopify', 'Shopify'], ['woo', 'WooCommerce'], ['instagram', 'Instagram / WhatsApp'], ['fisica', 'Tienda física'], ['otra', 'Otra']];
-const UNIDADES = [['', 'Sin pack'], ['un', 'unidades'], ['ml', 'ml'], ['l', 'litros'], ['g', 'gramos'], ['kg', 'kg']];
+const UNIDADES = [['', 'Sin pack'], ['un', 'unidades'], ['ml', 'ml'], ['l', 'lt (litros)'], ['g', 'gramos'], ['kg', 'kg']];
+const UNIDADES_PROD = [['', 'Sin unidad'], ['un', 'Unidad (un)'], ['kg', 'Kilos (kg)'], ['g', 'Gramos (g)'], ['lt', 'Litros (lt)'], ['ml', 'Mililitros (ml)'], ['pack', 'Pack'], ['caja', 'Caja'], ['docena', 'Docena'], ['par', 'Par'], ['m', 'Metros (m)']];
 const ESTADOS_LINK = [['ok', 'Activo'], ['roto', 'Roto'], ['bloqueado', 'Bloqueado'], ['porVerificar', 'Por verificar']];
 const PRIORIDADES = [['alta', 'Alta'], ['media', 'Media'], ['baja', 'Baja']];
 const PRIO_ORD = { alta: 0, media: 1, baja: 2 };
-const PRIO_CLS = { alta: 'bad', media: 'warn', baja: '' };
+const PRIO_LABEL = { alta: 'Prioridad alta', media: 'Prioridad media', baja: 'Prioridad baja' };
 
 /* ---------- Datos ---------- */
 let DB = {}, META = {};
@@ -163,6 +164,7 @@ const tcatName = id => { const c = rec('CategoriasTareas', id); return c && !c.e
 const tcats = () => live('CategoriasTareas').sort((a, b) => ((a.orden || 0) - (b.orden || 0)) || a.nombre.localeCompare(b.nombre));
 const tcatOptions = () => [['', 'Sin categoría'], ...tcats().map(c => [c.id, c.nombre])];
 const fechaCorta = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+const haceTxt = d => d <= 0 ? 'hoy' : (d === 1 ? 'ayer' : `hace ${d} días`);
 function tareaEstado(t) {
   if (!t.fechaLimite) return 'sinfecha';
   const h = today();
@@ -222,23 +224,40 @@ function leafOptions(includeArchived) {
   });
   return opts;
 }
+// Categorías de una tienda: ids separados por coma, solo los que siguen existiendo.
+const storeCatIds = t => String(t.categorias || '').split(',').filter(id => { const c = id && rec('Categorias', id); return c && !c.eliminado; });
+const topOf = id => { const c = rec('Categorias', id); if (!c || c.eliminado) return null; return c.padreId ? (rec('Categorias', c.padreId) || c) : c; };
 
 /* ---------- Formularios ---------- */
+const nonneg = fs => fs.map(f => f.type === 'num' ? { min: 0, ...f } : f);
 const opt = (o, v) => `<option value="${esc(o[0])}" ${String(o[0]) === String(v) ? 'selected' : ''}>${esc(o[1])}</option>`;
 function fieldHtml(f, vals) {
   const v = vals[f.k] ?? f.def ?? '';
   const hint = f.hint ? `<div class="mut small">${esc(f.hint)}</div>` : '';
   if (f.type === 'check') return `<label class="inl"><input type="checkbox" name="${f.k}" ${v ? 'checked' : ''}> ${esc(f.label)}</label>${hint}`;
   let ctl;
-  if (f.type === 'select') ctl = `<select name="${f.k}" ${f.req ? 'required' : ''}>${f.opts.map(o => o.g ? `<optgroup label="${esc(o.g)}">${o.items.map(i => opt(i, v)).join('')}</optgroup>` : opt(o, v)).join('')}</select>`;
-  else if (f.type === 'area') ctl = `<textarea name="${f.k}" rows="3">${esc(v)}</textarea>`;
-  else if (f.type === 'multi') ctl = f.opts.map(o => `<label class="inl"><input type="checkbox" name="${f.k}" value="${esc(o[0])}"> ${esc(o[1])}</label>`).join('') || '<div class="mut">Sin opciones disponibles.</div>';
-  else ctl = `<input name="${f.k}" type="${f.type === 'num' ? 'number' : (f.type || 'text')}" ${f.type === 'num' ? 'step="any" inputmode="decimal"' : ''} value="${esc(v)}" ${f.req ? 'required' : ''} ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>`;
+  if (f.type === 'select') {
+    let opts = f.opts;
+    const known = o => o.g ? o.items.some(i => String(i[0]) === String(v)) : String(o[0]) === String(v);
+    if (f.keep && v !== '' && !opts.some(known)) opts = [...opts, [v, v]];
+    ctl = `<select name="${f.k}" ${f.req ? 'required' : ''}>${opts.map(o => o.g ? `<optgroup label="${esc(o.g)}">${o.items.map(i => opt(i, v)).join('')}</optgroup>` : opt(o, v)).join('')}</select>`;
+  } else if (f.type === 'area') {
+    ctl = `<textarea name="${f.k}" rows="3">${esc(v)}</textarea>`;
+  } else if (f.type === 'multi') {
+    const sel = (Array.isArray(v) ? v : String(v).split(',')).filter(Boolean).map(String);
+    const one = o => `<label class="inl"><input type="checkbox" name="${f.k}" value="${esc(o[0])}" ${sel.includes(String(o[0])) ? 'checked' : ''}> ${esc(o[1])}</label>`;
+    ctl = f.opts.map(o => o.g ? `<div class="mut small" style="margin-top:8px">${esc(o.g)}</div>${o.items.map(one).join('')}` : one(o)).join('') || '<div class="mut">Sin opciones disponibles.</div>';
+  } else {
+    const extra = f.type === 'num'
+      ? `step="any" inputmode="decimal"${f.min != null ? ` min="${f.min}"` : ''}`
+      : (f.type === 'url' ? 'inputmode="url" autocapitalize="none" autocorrect="off"' : '');
+    ctl = `<input name="${f.k}" type="${f.type === 'num' ? 'number' : (f.type || 'text')}" ${extra} value="${esc(v)}" ${f.req ? 'required' : ''} ${f.ph ? `placeholder="${esc(f.ph)}"` : ''}>`;
+  }
   return `<label>${esc(f.label)}${f.req ? ' *' : ''}</label>${ctl}${hint}`;
 }
 function formModal(title, fields, vals, cb, submitLabel) {
   const d = document.createElement('dialog');
-  d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2>${fields.map(f => fieldHtml(f, vals)).join('')}
+  d.innerHTML = `<form method="dialog" novalidate><h2>${esc(title)}</h2>${fields.map(f => fieldHtml(f, vals)).join('')}
     <div class="row end"><button type="button" class="ghost" data-x>Cancelar</button><button class="primary">${esc(submitLabel || 'Guardar')}</button></div></form>`;
   document.body.append(d); d.showModal();
   const form = $('form', d);
@@ -249,10 +268,20 @@ function formModal(title, fields, vals, cb, submitLabel) {
     ev.preventDefault();
     const v = {};
     for (const f of fields) {
-      if (f.type === 'multi') v[f.k] = [...form.querySelectorAll(`[name="${f.k}"]:checked`)].map(x => x.value);
-      else if (f.type === 'check') v[f.k] = form.elements[f.k].checked ? 1 : 0;
-      else if (f.type === 'num') { const x = form.elements[f.k].value; v[f.k] = x === '' ? null : Number(x); }
-      else v[f.k] = form.elements[f.k].value.trim();
+      if (f.type === 'multi') { v[f.k] = [...form.querySelectorAll(`[name="${f.k}"]:checked`)].map(x => x.value); continue; }
+      if (f.type === 'check') { v[f.k] = form.elements[f.k].checked ? 1 : 0; continue; }
+      const el = form.elements[f.k];
+      let raw = el.value.trim();
+      if (f.req && raw === '') { alert(`Falta completar: ${f.label}`); el.focus(); return; }
+      if (f.type === 'num') {
+        if (raw === '') { v[f.k] = null; continue; }
+        const n = Number(raw);
+        if (isNaN(n)) { alert(`${f.label}: escribe solo un número`); el.focus(); return; }
+        if (f.min != null && n < f.min) { alert(`${f.label} no puede ser menor a ${f.min}`); el.focus(); return; }
+        v[f.k] = n; continue;
+      }
+      if (f.type === 'url' && raw && !/^https?:\/\//i.test(raw)) raw = 'https://' + raw;
+      v[f.k] = raw;
     }
     if (cb(v) === false) return;
     d.close(); render();
@@ -260,7 +289,7 @@ function formModal(title, fields, vals, cb, submitLabel) {
 }
 
 /* ---------- Estado de vista ---------- */
-const S = { view: 'inicio', param: null, q: '', fcat: '', ttab: 'rapida', tcat: '', tprio: '', rOpen: false, tOpen: false };
+const S = { view: 'inicio', param: null, q: '', fcat: '', ttab: 'rapida', tcat: '', tprio: '', rOpen: false, tOpen: false, tFiltro: false, revOpen: false };
 const TITLES = { inicio: 'Inicio', productos: 'Productos', producto: 'Producto', listas: 'Listas de compra', lista: 'Lista', tareas: 'Tareas', tcategorias: 'Categorías de tareas', alertas: 'Alertas', mas: 'Más', categorias: 'Categorías', tiendas: 'Tiendas', config: 'Configuración' };
 const NAVMAP = { producto: 'productos', lista: 'listas', tcategorias: 'tareas', categorias: 'mas', tiendas: 'mas', config: 'mas' };
 
@@ -275,17 +304,40 @@ function backBtn(to) { return `<button class="mini" data-act="nav" data-id="${to
 /* ---------- Vistas ---------- */
 const VIEWS = {};
 
+function storeReviewHtml() {
+  const hoy = today();
+  const ts = live('Tiendas').sort((a, b) => a.nombre.localeCompare(b.nombre));
+  if (!ts.length) return '';
+  const rows = ts.map(t => {
+    const obs = live('Precios').filter(p => p.tiendaId === t.id).sort((a, b) => (a.fecha + a.updatedAt).localeCompare(b.fecha + b.updatedAt));
+    const last = obs[obs.length - 1];
+    const links = live('Links').filter(l => l.tiendaId === t.id);
+    const prob = links.filter(l => l.estadoLink && l.estadoLink !== 'ok').length;
+    const cuando = last ? `${fechaCorta(last.fecha)} (${haceTxt(daysBetween(last.fecha, hoy))})` : 'Sin revisión aún';
+    const how = last ? (last.metodo && last.metodo !== 'manual' ? 'automática' : 'manual') : '';
+    return `<div class="row between small" style="padding:6px 0;border-bottom:1px solid var(--line)">
+      <div><b>${esc(t.nombre)}</b><div class="mut">${links.length} link(s)${how ? ' · revisión ' + how : ''}</div></div>
+      <div style="text-align:right">${esc(cuando)}${prob ? `<div>${pill(prob + ' con problema', 'bad')}</div>` : ''}</div></div>`;
+  }).join('');
+  return `<details id="revdet" style="margin:10px 0" ${S.revOpen ? 'open' : ''}><summary>Última revisión de las tiendas (${ts.length})</summary>
+    <div class="card" style="margin-top:6px;padding:4px 12px">${rows}</div></details>`;
+}
+
 VIEWS.inicio = () => {
   const al = computeAlerts();
   const group = tipos => al.filter(a => tipos.includes(a.tipo));
   const sec = (t, items, vacio) => `<h2>${t}</h2>` + (items.length ? items.slice(0, 5).map(alertRow).join('') : `<div class="mut small">${vacio}</div>`);
   const vig = live('Productos').filter(p => p.estado === 'vigilando').length;
-  const sync = META.lastSync ? `Sincronizado ${new Date(META.lastSync).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })}` : (META.url ? 'Aún sin sincronizar' : 'Sincronización no configurada');
+  const despacho = `Despacho a ${esc(cfg('comuna'))}`;
+  const syncBox = META.url
+    ? `<div class="mut small">${META.lastSync ? 'Sincronizado ' + esc(new Date(META.lastSync).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' })) : 'Aún sin sincronizar'} · ${despacho}</div>`
+    : `<div class="warnbox" data-act="nav" data-id="config" style="cursor:pointer">Sincronización no configurada: tus datos están solo en este dispositivo. Toca aquí para configurarla.</div><div class="mut small" style="margin-top:6px">${despacho}</div>`;
   return `<div class="grid2">
       <div class="card"><div class="price">${vig}</div><div class="mut small">productos vigilando</div></div>
       <div class="card click" data-act="nav" data-id="alertas"><div class="price">${al.length}</div><div class="mut small">alertas pendientes</div></div>
     </div>
-    <div class="mut small">${esc(sync)} · Despacho a ${esc(cfg('comuna'))}</div>
+    ${syncBox}
+    ${storeReviewHtml()}
     ${sec('Para comprar ahora', group(['objetivo', 'momento']), 'Nada por ahora. Cuando un precio baje, aparecerá aquí.')}
     ${sec('Por reponer', group(['reponer']), 'Sin reposiciones pendientes.')}
     ${sec('Sin precio actualizado', group(['sinprecio']), 'Todo al día.')}
@@ -310,9 +362,9 @@ function productList() {
   return items.map(p => {
     const b = bestOffer(p.id), gm = p.estado === 'vigilando' && goodMoment(p);
     return `<div class="card click" data-act="prod-open" data-id="${p.id}">
-      <div class="row between"><h3>${esc(p.nombre)}</h3>${b ? `<span class="price">${money(b.c.best)}</span>` : '<span class="mut small">sin precio</span>'}</div>
+      <div class="row between"><h3>${esc(p.nombre)}</h3>${b ? `<span class="price">${money(b.c.best)}</span>` : `<button class="mini" data-act="offer-new" data-id="${p.id}">+ precio</button>`}</div>
       <div class="mut small">${esc(p.especificacion)} ${p.especificacion ? '·' : ''} ${esc(catName(p.categoriaId))}${b && b.tienda ? ' · ' + esc(b.tienda.nombre) : ''}</div>
-      <div>${p.estado !== 'vigilando' ? pill(p.estado) : ''}${gm ? pill('Buen momento', 'good') : ''}${p.prioridad === 'alta' ? pill('Prioridad alta', 'warn') : ''}</div></div>`;
+      <div>${p.estado !== 'vigilando' ? pill(p.estado) : ''}${gm ? pill('Buen momento', 'good') : ''}</div></div>`;
   }).join('');
 }
 
@@ -324,7 +376,7 @@ VIEWS.producto = () => {
   return `<div class="row between">${backBtn('productos')}<div class="row"><button class="mini" data-act="prod-edit" data-id="${p.id}">Editar</button><button class="mini danger" data-act="prod-del" data-id="${p.id}">Eliminar</button></div></div>
     <h1>${esc(p.nombre)}</h1>
     <div class="mut">${esc(p.especificacion)} ${p.cantidad ? '· ' + p.cantidad + ' ' + esc(p.unidad) : ''}</div>
-    <div>${pill(catName(p.categoriaId))}${pill(cat ? cat.tipoCompra : '')}${pill(p.estado)}${p.prioridad ? pill('Prioridad ' + p.prioridad) : ''}${gm ? gm.map(x => pill(WHY[x], 'good')).join('') : ''}</div>
+    <div>${pill(catName(p.categoriaId))}${pill(cat ? cat.tipoCompra : '')}${pill(p.estado)}${gm ? gm.map(x => pill(WHY[x], 'good')).join('') : ''}</div>
     <div class="card" style="margin-top:10px">
       <div class="grid2"><div><div class="mut small">Objetivo</div><b>${money(p.precioObjetivo)}</b></div><div><div class="mut small">Mínimo histórico</div><b>${money(st.min)}</b></div>
       <div><div class="mut small">Promedio 30 días</div><b>${money(st.avg30)}</b></div><div><div class="mut small">Observaciones</div><b>${st.n}</b></div></div>
@@ -406,6 +458,7 @@ VIEWS.lista = () => {
       ${g.items.map(({ i, prod, o }) => `<div class="row between" style="padding:6px 0;border-bottom:1px solid var(--line)">
         <label class="inl" style="margin:0;flex:1"><input type="checkbox" data-act="item-toggle" data-id="${i.id}" ${i.comprado ? 'checked' : ''}> <span style="${i.comprado ? 'text-decoration:line-through;opacity:.6' : ''}">${esc(prod.nombre)} × ${i.cantidad}</span></label>
         <span class="small">${o ? money(o.price.precioContado * i.cantidad) : '-'}</span>
+        ${o ? '' : `<button class="mini" data-act="offer-new" data-id="${prod.id}">+ precio</button>`}
         <button class="mini" data-act="item-store" data-id="${i.id}">tienda</button><button class="mini danger" data-act="item-del" data-id="${i.id}">x</button></div>`).join('')}
       ${g.tienda ? `<div class="mut small" style="margin-top:6px">Envío: ${free ? 'gratis' : (env == null ? 'por cotizar' : money(env))}${allRet ? ' · retiro en tienda disponible (sin envío)' : ''}</div>` : ''}
       ${falta > 0 ? `<div class="warnbox">Te faltan ${money(falta)} para envío gratis en ${esc(g.tienda.nombre)}. ¿Agregar otro producto de esta tienda?</div>` : ''}</div>`;
@@ -438,17 +491,24 @@ function viewRapida() {
 
 function tareaCard(t) {
   const est = tareaEstado(t), hecha = t.estado === 'hecha';
-  const pb = (txt, cls, act) => `<button class="pill ${cls}" data-act="${act}" data-id="${t.id}">${esc(txt)}</button>`;
-  const cat = tcatName(t.categoriaId);
+  const cat = tcatName(t.categoriaId) || 'Sin categoría';
+  const pr = PRIO_ORD[t.prioridad] != null ? t.prioridad : 'media';
   let fechaTxt = t.fechaLimite ? fechaCorta(t.fechaLimite) : 'Sin fecha';
   if (!hecha && est === 'atrasada') fechaTxt += ` (hace ${daysBetween(t.fechaLimite, today())} d)`;
   if (!hecha && est === 'hoy') fechaTxt += ' (hoy)';
   const fechaCls = hecha ? '' : (est === 'atrasada' ? 'bad' : (est === 'hoy' ? 'warn' : ''));
   return `<div class="card tarea ${hecha ? 'done' : ''}">
-    <div class="row"><input type="checkbox" data-act="tarea-toggle" data-id="${t.id}" ${hecha ? 'checked' : ''} aria-label="Hecha">
-      <div style="flex:1"><h3>${esc(t.titulo)}</h3>${t.notas ? `<div class="mut small">${esc(t.notas)}</div>` : ''}</div></div>
-    <div class="row wrap" style="margin-top:6px">${pb(cat || 'Sin categoría', '', 'tarea-cat')}${pb('Prioridad ' + (t.prioridad || 'media'), PRIO_CLS[t.prioridad] || '', 'tarea-prio')}${pb(fechaTxt, fechaCls, 'tarea-fecha')}</div>
-    ${hecha && t.fechaHecha ? `<div class="mut small">Hecha el ${esc(fechaCorta(t.fechaHecha))}</div>` : ''}
+    <div class="row" style="align-items:flex-start"><input type="checkbox" data-act="tarea-toggle" data-id="${t.id}" ${hecha ? 'checked' : ''} aria-label="Hecha">
+      <div style="flex:1">
+        <div class="tdesc">${esc(t.titulo)}</div>
+        ${t.notas ? `<div class="mut small">${esc(t.notas)}</div>` : ''}
+        <div class="tmeta">
+          <button class="tcat" data-act="tarea-cat" data-id="${t.id}">${esc(cat)}</button>
+          <button class="prio-${pr}" data-act="tarea-prio" data-id="${t.id}">${PRIO_LABEL[pr]}</button>
+          <button class="tdate ${fechaCls}" data-act="tarea-fecha" data-id="${t.id}">${esc(fechaTxt)}</button>
+        </div>
+        ${hecha && t.fechaHecha ? `<div class="mut small" style="margin-top:4px">Hecha el ${esc(fechaCorta(t.fechaHecha))}</div>` : ''}
+      </div></div>
     <div class="row end" style="margin-top:6px"><button class="mini" data-act="tarea-edit" data-id="${t.id}">Editar</button><button class="mini danger" data-act="tarea-del" data-id="${t.id}">x</button></div></div>`;
 }
 
@@ -460,14 +520,22 @@ function viewPlan() {
   const secs = [['atrasada', 'Atrasadas'], ['hoy', 'Hoy'], ['proxima', 'Próximas'], ['sinfecha', 'Sin fecha']];
   const catOpts = [['', 'Todas las categorías'], ...tcats().map(c => [c.id, c.nombre]), ['_none', 'Sin categoría']];
   const prioOpts = [['', 'Todas las prioridades'], ...PRIORIDADES];
+  const n = (S.tcat ? 1 : 0) + (S.tprio ? 1 : 0);
   const body = secs.map(([k, label]) => {
     const items = pend.filter(t => tareaEstado(t) === k);
     return items.length ? `<h2>${label} (${items.length})</h2>${items.map(tareaCard).join('')}` : '';
   }).join('');
-  return `<div class="row between"><button class="mini" data-act="nav" data-id="tcategorias">Categorías de tareas</button><button class="primary" data-act="tarea-new">+ Tarea</button></div>
-    <div class="grid2" style="margin:10px 0 0">
-      <select id="tfcat">${catOpts.map(o => opt(o, S.tcat)).join('')}</select>
-      <select id="tfprio">${prioOpts.map(o => opt(o, S.tprio)).join('')}</select></div>
+  const panel = S.tFiltro
+    ? `<div class="card" style="margin-top:10px"><div class="grid2">
+        <select id="tfcat">${catOpts.map(o => opt(o, S.tcat)).join('')}</select>
+        <select id="tfprio">${prioOpts.map(o => opt(o, S.tprio)).join('')}</select></div>
+        ${n ? '<div class="row end" style="margin-top:8px"><button class="mini" data-act="t-limpiar">Limpiar filtros</button></div>' : ''}</div>`
+    : '';
+  const activo = (!S.tFiltro && n)
+    ? `<div class="mut small" style="margin-top:6px">Filtrando${S.tcat ? ': ' + esc(S.tcat === '_none' ? 'Sin categoría' : tcatName(S.tcat)) : ''}${S.tprio ? (S.tcat ? ' · ' : ': ') + 'prioridad ' + esc(S.tprio) : ''}</div>`
+    : '';
+  return `<div class="row between"><div class="row"><button class="mini" data-act="t-filtro">Filtros${n ? ' (' + n + ')' : ''}</button><button class="mini" data-act="nav" data-id="tcategorias">Categorías</button></div><button class="primary" data-act="tarea-new">+ Tarea</button></div>
+    ${panel}${activo}
     ${body || '<div class="empty">Sin tareas pendientes. Toca "+ Tarea" para agregar una.</div>'}
     ${done.length ? `<details id="tdone" ${S.tOpen ? 'open' : ''}><summary>Hechas (${done.length})</summary>${done.map(tareaCard).join('')}</details>` : ''}`;
 }
@@ -499,11 +567,26 @@ VIEWS.categorias = () => `<div class="row between">${backBtn('mas')}<button clas
   topCats().map(t => `<div class="card"><div class="row between"><h3>${esc(t.nombre)} ${t.archivada ? pill('archivada') : ''}</h3><div class="row"><button class="mini" data-act="cat-new" data-id="${t.id}">+ Sub</button><button class="mini" data-act="cat-edit" data-id="${t.id}">Editar</button><button class="mini" data-act="cat-arch" data-id="${t.id}">${t.archivada ? 'Restaurar' : 'Archivar'}</button><button class="mini danger" data-act="cat-del" data-id="${t.id}">x</button></div></div>
     ${kidsOf(t.id).map(k => `<div class="row between sub" style="padding:6px 0;border-top:1px solid var(--line)"><div>${esc(k.nombre)} ${k.archivada ? pill('archivada') : ''}<div class="mut small">${esc(k.tipoCompra)} · ${k.compararPor === 'unitario' ? 'precio unitario' : 'total con envío'}</div></div><div class="row"><button class="mini" data-act="cat-edit" data-id="${k.id}">Editar</button><button class="mini" data-act="cat-arch" data-id="${k.id}">${k.archivada ? 'Restaurar' : 'Archivar'}</button><button class="mini danger" data-act="cat-del" data-id="${k.id}">x</button></div></div>`).join('')}</div>`).join('') + '</div>';
 
+function storeCard(t, subs) {
+  return `<div class="card"><div class="row between"><h3>${esc(t.nombre)}</h3><div class="row"><button class="mini" data-act="store-edit" data-id="${t.id}">Editar</button><button class="mini danger" data-act="store-del" data-id="${t.id}">x</button></div></div>
+    <div class="mut small">${esc((TIPOS_TIENDA.find(x => x[0] === t.tipo) || [])[1] || '')} · envío ${t.envioPenalolen == null ? 'por cotizar' : money(t.envioPenalolen)}${t.envioGratisDesde ? ' · gratis desde ' + money(t.envioGratisDesde) : ''}${t.retiroDisponible ? ' · retiro disponible' : ''}</div>
+    ${subs.length ? `<div>${subs.map(id => pill(rec('Categorias', id).nombre)).join('')}</div>` : ''}</div>`;
+}
 VIEWS.tiendas = () => {
   const ts = live('Tiendas').sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const groups = [];
+  topCats().forEach(top => {
+    const items = [];
+    ts.forEach(t => {
+      const ids = storeCatIds(t).filter(id => { const x = topOf(id); return x && x.id === top.id; });
+      if (ids.length) items.push({ t, subs: ids.filter(id => id !== top.id) });
+    });
+    if (items.length) groups.push({ titulo: top.nombre, items });
+  });
+  const sin = ts.filter(t => !storeCatIds(t).length);
+  if (sin.length) groups.push({ titulo: 'Sin categoría', items: sin.map(t => ({ t, subs: [] })) });
   return `<div class="row between">${backBtn('mas')}<button class="primary" data-act="store-new">+ Tienda</button></div><h1>Tiendas</h1>` +
-    (ts.length ? ts.map(t => `<div class="card"><div class="row between"><h3>${esc(t.nombre)}</h3><div class="row"><button class="mini" data-act="store-edit" data-id="${t.id}">Editar</button><button class="mini danger" data-act="store-del" data-id="${t.id}">x</button></div></div>
-      <div class="mut small">${esc((TIPOS_TIENDA.find(x => x[0] === t.tipo) || [])[1] || '')} · envío ${t.envioPenalolen == null ? 'por cotizar' : money(t.envioPenalolen)}${t.envioGratisDesde ? ' · gratis desde ' + money(t.envioGratisDesde) : ''}${t.retiroDisponible ? ' · retiro disponible' : ''}</div></div>`).join('')
+    (groups.length ? groups.map(g => `<h2>${esc(g.titulo)}</h2>${g.items.map(x => storeCard(x.t, x.subs)).join('')}`).join('')
       : '<div class="empty">Las tiendas se crean solas al agregar un precio, o puedes crearlas aquí.</div>');
 };
 
@@ -537,23 +620,25 @@ ACT['prod-open'] = id => go('producto', id);
 ACT['list-open'] = id => go('lista', id);
 
 function productFields() {
-  return [
+  return nonneg([
     { k: 'nombre', label: 'Nombre', req: 1 },
     { k: 'categoriaId', label: 'Categoría', type: 'select', req: 1, opts: [['', 'Elegir...'], ...leafOptions()] },
     { k: 'especificacion', label: 'Especificación (marca, modelo, talla, volumen)' },
     { k: 'cantidad', label: 'Cantidad que necesitas', type: 'num' },
-    { k: 'unidad', label: 'Unidad (un, kg, L...)' },
-    { k: 'prioridad', label: 'Prioridad', type: 'select', opts: [['media', 'Media'], ['alta', 'Alta'], ['baja', 'Baja']] },
-    { k: 'precioObjetivo', label: 'Precio objetivo (total en CLP)', type: 'num' },
-    { k: 'frecuenciaDias', label: 'Recompra cada (días)', type: 'num', hint: 'Solo para productos recurrentes.' },
+    { k: 'unidad', label: 'Unidad', type: 'select', opts: UNIDADES_PROD, keep: 1 },
+    { k: 'precioObjetivo', label: 'Precio objetivo (total en CLP)', type: 'num', hint: 'Opcional: lo que te gustaría pagar. Los precios reales se agregan con la tienda.' },
     { k: 'estado', label: 'Estado', type: 'select', opts: [['vigilando', 'Vigilando'], ['comprado', 'Comprado'], ['pausado', 'Pausado']] },
     { k: 'notas', label: 'Notas', type: 'area' }
-  ];
+  ]);
 }
 ACT['prod-new'] = () => {
   if (!leafOptions().length) return alert('Primero crea una categoría.');
-  formModal('Nuevo producto', productFields(), { prioridad: 'media', estado: 'vigilando', categoriaId: S.fcat && !rec('Categorias', S.fcat).padreId ? '' : S.fcat },
-    v => { const p = { id: uid(), ultimaCompra: '', eliminado: 0, ...v }; save('Productos', p); S.view = 'producto'; S.param = p.id; });
+  formModal('Nuevo producto', productFields(), { estado: 'vigilando', unidad: '', categoriaId: S.fcat && !rec('Categorias', S.fcat).padreId ? '' : S.fcat },
+    v => {
+      const p = { id: uid(), ultimaCompra: '', eliminado: 0, ...v };
+      save('Productos', p); S.view = 'producto'; S.param = p.id;
+      setTimeout(() => ACT['offer-new'](p.id), 80); // pide enseguida la tienda y el precio
+    }, 'Guardar y agregar precio');
 };
 ACT['prod-edit'] = id => {
   const p = rec('Productos', id);
@@ -583,7 +668,7 @@ function priceFields(withLink) {
     { k: 'tiendaId', label: 'Tienda', type: 'select', opts: storeOptions(), onchange: form => {
       const t = rec('Tiendas', form.elements.tiendaId.value); if (!t) return;
       form.elements.envio.value = t.envioPenalolen ?? ''; form.elements.envioGratisDesde.value = t.envioGratisDesde ?? '';
-      form.elements.retiroDisponible.checked = !!t.retiroDisponible; form.elements.plazoEntrega.value = t.plazoEntrega || '';
+      form.elements.retiroDisponible.checked = !!t.retiroDisponible;
     } },
     { k: 'tiendaNueva', label: 'o escribe una tienda nueva', hint: 'Se guardará con sus costos de envío para la próxima vez.' },
     { k: 'url', label: 'Link del producto', type: 'url', ph: 'https://' },
@@ -604,7 +689,7 @@ function priceFields(withLink) {
     { k: 'otrosDetalle', label: 'Detalle de otros costos' },
     { k: 'plazoEntrega', label: 'Plazo de entrega' },
     { k: 'disponible', label: 'Hay stock', type: 'check' });
-  return f;
+  return nonneg(f);
 }
 function makePrice(link, v) {
   const p = { id: uid(), linkId: link.id, productoId: link.productoId, tiendaId: link.tiendaId, fecha: v.fecha || today(),
@@ -615,11 +700,12 @@ function makePrice(link, v) {
   return p;
 }
 ACT['offer-new'] = prodId => {
-  formModal('Nueva tienda y precio', priceFields(true), { fecha: today(), disponible: 1, unidadPack: '' }, v => {
+  const prod = rec('Productos', prodId);
+  formModal(`Tienda y precio${prod ? ': ' + prod.nombre : ''}`, priceFields(true), { fecha: today(), disponible: 1, unidadPack: '' }, v => {
     let tiendaId = v.tiendaId;
     if (v.tiendaNueva) {
       const t = { id: uid(), nombre: v.tiendaNueva, tipo: 'web', sitioWeb: '', envioPenalolen: v.envio, envioGratisDesde: v.envioGratisDesde,
-        retiroDisponible: v.retiroDisponible, plazoEntrega: v.plazoEntrega, notas: '', eliminado: 0 };
+        retiroDisponible: v.retiroDisponible, plazoEntrega: '', notas: '', categorias: prod ? prod.categoriaId : '', eliminado: 0 };
       try { t.sitioWeb = new URL(v.url).origin; } catch { }
       save('Tiendas', t); tiendaId = t.id;
     }
@@ -630,18 +716,18 @@ ACT['offer-new'] = prodId => {
 };
 ACT['price-new'] = linkId => {
   const l = rec('Links', linkId), last = lastPrice(linkId), t = rec('Tiendas', l.tiendaId) || {};
-  const base = last ? { ...last } : { envio: t.envioPenalolen, envioGratisDesde: t.envioGratisDesde, retiroDisponible: t.retiroDisponible, plazoEntrega: t.plazoEntrega, disponible: 1 };
+  const base = last ? { ...last } : { envio: t.envioPenalolen, envioGratisDesde: t.envioGratisDesde, retiroDisponible: t.retiroDisponible, disponible: 1 };
   base.fecha = today();
   formModal('Nuevo precio', priceFields(false), base, v => { save('Precios', makePrice(l, v)); }, 'Guardar precio');
 };
 ACT['price-del'] = id => { if (confirm('¿Borrar esta observación de precio?')) { remove('Precios', id); render(); } };
 ACT['link-edit'] = id => {
   const l = rec('Links', id);
-  formModal('Editar link', [
+  formModal('Editar link', nonneg([
     { k: 'url', label: 'Link', type: 'url' }, { k: 'variante', label: 'Variante' },
     { k: 'contenidoPack', label: 'Contenido del pack', type: 'num' }, { k: 'unidadPack', label: 'Unidad del pack', type: 'select', opts: UNIDADES },
     { k: 'estadoLink', label: 'Estado del link', type: 'select', opts: ESTADOS_LINK }
-  ], l, v => { save('Links', { ...l, ...v }); });
+  ]), l, v => { save('Links', { ...l, ...v }); });
 };
 ACT['link-del'] = id => {
   if (!confirm('¿Quitar esta tienda del producto, con su historial de precios?')) return;
@@ -650,19 +736,23 @@ ACT['link-del'] = id => {
 
 /* Tiendas */
 function storeFields() {
-  return [
+  return nonneg([
     { k: 'nombre', label: 'Nombre', req: 1 },
     { k: 'tipo', label: 'Tipo', type: 'select', opts: TIPOS_TIENDA },
     { k: 'sitioWeb', label: 'Sitio web', type: 'url', ph: 'https://' },
+    { k: 'categorias', label: 'Categorías que vende', type: 'multi', opts: leafOptions() },
     { k: 'envioPenalolen', label: `Envío a ${cfg('comuna')}`, type: 'num', hint: 'Vacío = por cotizar. 0 = gratis.' },
     { k: 'envioGratisDesde', label: 'Envío gratis desde', type: 'num' },
     { k: 'retiroDisponible', label: 'Ofrece retiro en tienda', type: 'check' },
-    { k: 'plazoEntrega', label: 'Plazo de entrega habitual' },
     { k: 'notas', label: 'Notas', type: 'area' }
-  ];
+  ]);
 }
-ACT['store-new'] = () => formModal('Nueva tienda', storeFields(), { tipo: 'web' }, v => { save('Tiendas', { id: uid(), eliminado: 0, ...v }); });
-ACT['store-edit'] = id => { const t = rec('Tiendas', id); formModal('Editar tienda', storeFields(), t, v => { save('Tiendas', { ...t, ...v }); }); };
+ACT['store-new'] = () => formModal('Nueva tienda', storeFields(), { tipo: 'web', categorias: '' },
+  v => { save('Tiendas', { id: uid(), eliminado: 0, ...v, categorias: v.categorias.join(',') }); });
+ACT['store-edit'] = id => {
+  const t = rec('Tiendas', id);
+  formModal('Editar tienda', storeFields(), t, v => { save('Tiendas', { ...t, ...v, categorias: v.categorias.join(',') }); });
+};
 ACT['store-del'] = id => {
   const n = live('Links').filter(l => l.tiendaId === id).length;
   if (n) return alert(`Esta tienda está en ${n} link(s). Quita esos links primero.`);
@@ -674,7 +764,7 @@ function catFields() {
   return [
     { k: 'nombre', label: 'Nombre', req: 1 },
     { k: 'padreId', label: 'Dentro de', type: 'select', opts: [['', '(Categoría principal)'], ...topCats().map(t => [t.id, t.nombre])] },
-    { k: 'tipoCompra', label: 'Tipo de compra', type: 'select', opts: TIPOS_COMPRA, hint: 'Recurrente activa la frecuencia de recompra y las alertas de reposición.' },
+    { k: 'tipoCompra', label: 'Tipo de compra', type: 'select', opts: TIPOS_COMPRA, hint: 'Única: al comprarlo deja de vigilarse. Recurrente: se sigue vigilando después de comprarlo.' },
     { k: 'compararPor', label: 'Comparar por', type: 'select', opts: COMPARAR }
   ];
 }
@@ -713,15 +803,17 @@ ACT['item-del'] = id => { remove('ListaItems', id); render(); };
 ACT['item-store'] = id => {
   const i = rec('ListaItems', id);
   const offs = offersOf(i.productoId).filter(o => o.price && o.price.disponible && o.tienda);
-  if (!offs.length) return alert('Este producto no tiene tiendas con precio.');
-  formModal('Elegir tienda', [
+  if (!offs.length) return alert('Este producto no tiene tiendas con precio. Usa el botón "+ precio".');
+  formModal('Elegir tienda', nonneg([
     { k: 'tiendaId', label: 'Tienda', type: 'select', opts: [['', 'La más barata'], ...offs.map(o => [o.tienda.id, `${o.tienda.nombre} (${money(o.c.best)})`])] },
     { k: 'cantidad', label: 'Cantidad', type: 'num', req: 1 }
-  ], i, v => { save('ListaItems', { ...i, ...v }); });
+  ]), i, v => { save('ListaItems', { ...i, ...v }); });
 };
 
 /* Tareas: pestaña y lista rápida */
 ACT.ttab = id => { S.ttab = id; render(); };
+ACT['t-filtro'] = () => { S.tFiltro = !S.tFiltro; render(); };
+ACT['t-limpiar'] = () => { S.tcat = ''; S.tprio = ''; render(); };
 ACT['tarea-open'] = () => { S.ttab = 'plan'; go('tareas'); };
 ACT['rapida-add'] = () => {
   const el = $('#rq'), texto = el ? el.value.trim() : '';
@@ -744,11 +836,11 @@ ACT['rapida-clean'] = () => {
 
 /* Tareas planificadas */
 const tareaFields = () => [
-  { k: 'titulo', label: 'Tarea', req: 1 },
+  { k: 'titulo', label: 'Descripción de la tarea', req: 1 },
   { k: 'categoriaId', label: 'Categoría', type: 'select', opts: tcatOptions() },
   { k: 'prioridad', label: 'Prioridad', type: 'select', opts: PRIORIDADES },
   { k: 'fechaLimite', label: 'Fecha para cumplir', type: 'date', hint: 'Déjala vacía si no tiene fecha.' },
-  { k: 'notas', label: 'Notas', type: 'area' }
+  { k: 'notas', label: 'Notas (opcional)', type: 'area' }
 ];
 ACT['tarea-new'] = () => formModal('Nueva tarea', tareaFields(),
   { categoriaId: S.tcat && S.tcat !== '_none' ? S.tcat : '', prioridad: 'media', fechaLimite: '' },
@@ -811,14 +903,14 @@ ACT['alert-dismiss'] = (key, b) => {
 };
 
 /* Configuración, respaldo */
-ACT['cfg-edit'] = () => formModal('Reglas de precios y alertas', [
+ACT['cfg-edit'] = () => formModal('Reglas de precios y alertas', nonneg([
   { k: 'comuna', label: 'Comuna de despacho' },
   { k: 'diasSinActualizar', label: 'Avisar si no hay precio nuevo en (días)', type: 'num' },
   { k: 'margenMinimo', label: 'Buen momento: hasta este % sobre el mínimo histórico', type: 'num' },
   { k: 'bajoPromedio', label: 'Buen momento: al menos este % bajo el promedio de 30 días', type: 'num' },
   { k: 'minObservaciones', label: 'Mínimo de observaciones para evaluar', type: 'num' },
   { k: 'diasSilencio', label: 'Días que dura una alerta descartada', type: 'num' }
-], { comuna: cfg('comuna'), diasSinActualizar: cfg('diasSinActualizar'), margenMinimo: cfg('margenMinimo'), bajoPromedio: cfg('bajoPromedio'), minObservaciones: cfg('minObservaciones'), diasSilencio: cfg('diasSilencio') },
+]), { comuna: cfg('comuna'), diasSinActualizar: cfg('diasSinActualizar'), margenMinimo: cfg('margenMinimo'), bajoPromedio: cfg('bajoPromedio'), minObservaciones: cfg('minObservaciones'), diasSilencio: cfg('diasSilencio') },
   v => { Object.entries(v).forEach(([k, x]) => { if (x !== null && x !== '') setCfg(k, x); }); });
 ACT['sync-cfg'] = () => formModal('Sincronización', [
   { k: 'url', label: 'URL de la aplicación web (Apps Script)', type: 'url', ph: 'https://script.google.com/macros/s/.../exec' },
@@ -904,6 +996,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id
 document.addEventListener('toggle', e => {
   if (e.target.id === 'rdone') S.rOpen = e.target.open;
   if (e.target.id === 'tdone') S.tOpen = e.target.open;
+  if (e.target.id === 'revdet') S.revOpen = e.target.open;
 }, true);
 window.addEventListener('online', sync);
 
